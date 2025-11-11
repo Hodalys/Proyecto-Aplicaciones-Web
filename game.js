@@ -1,474 +1,345 @@
-// =========================================================
-// 1. CONFIGURACIÓN E INICIALIZACIÓN DEL CANVAS
-// =========================================================
+// game.js (versión robusta adaptada a Box2d local)
+
+// ==============================
+// CONFIGURACIÓN DEL CANVAS
+// ==============================
 const canvas = document.getElementById('game-canvas');
 const ctx = canvas.getContext('2d');
+function resizeCanvas() {
+  canvas.width = window.innerWidth;
+  canvas.height = window.innerHeight;
+}
+resizeCanvas();
+window.addEventListener('resize', resizeCanvas);
+// Visual aid para verificar que el canvas existe
+canvas.style.backgroundColor = '#000'; // luego puedes quitarlo
 
-const GAME_WIDTH = 800;
-const GAME_HEIGHT = 600;
-
-canvas.width = GAME_WIDTH;
-canvas.height = GAME_HEIGHT;
-
-// =========================================================
-// 2. CONSTANTES Y VARIABLES GLOBALES DE BOX2D Y JUEGO
-// =========================================================
-
-// Referencias a las clases de Box2D
-const b2Vec2 = Box2D.Common.Math.b2Vec2;
-const b2World = Box2D.Dynamics.b2World;
-const b2BodyDef = Box2D.Dynamics.b2BodyDef;
-const b2Body = Box2D.Dynamics.b2Body;
-const b2FixtureDef = Box2D.Dynamics.b2FixtureDef;
-const b2PolygonShape = Box2D.Collision.Shapes.b2PolygonShape;
-const b2CircleShape = Box2D.Collision.Shapes.b2CircleShape;
-const b2MouseJointDef = Box2D.Dynamics.Joints.b2MouseJointDef;
-const b2ContactListener = Box2D.Dynamics.b2ContactListener;
-
-// Estados del Juego
-const GAME_STATE = {
-    LOADING: 0, MENU: 1, PLAYING: 2, PAUSED: 3, GAMEOVER: 4
+// ==============================
+// DEFINICIÓN DE ASSETS
+// ==============================
+const ASSETS = {
+  images: {
+    background: 'assets/images/background.png',
+    catapult: 'assets/images/catapult.png',
+    wood_box: 'assets/images/wood_box.png',
+    target_image: 'assets/images/target.jpg',
+    projectile_image: 'assets/images/projectile_image.jpg'
+  },
+  audio: {
+    // rellenar si tienes audio
+  }
 };
 
+const loadedAssets = { images: {}, audio: {} };
+
+// ==============================
+// CARGA DE ASSETS (con fallback y callback)
+// ==============================
+function loadAssets(callback) {
+  const imageKeys = Object.keys(ASSETS.images);
+  const audioKeys = Object.keys(ASSETS.audio || {});
+  const totalAssets = imageKeys.length + audioKeys.length;
+  let assetsLoaded = 0;
+
+  const checkLoaded = () => {
+    assetsLoaded++;
+    console.log(`Asset cargado (${assetsLoaded}/${totalAssets})`);
+    if (assetsLoaded === totalAssets) {
+      console.log("✅ Todos los assets cargados correctamente");
+      callback();
+    }
+  };
+
+  // Si no hay assets, llama al callback inmediatamente
+  if (totalAssets === 0) {
+    console.log("No hay assets a cargar");
+    callback();
+    return;
+  }
+
+  imageKeys.forEach(key => {
+    const img = new Image();
+    img.onload = checkLoaded;
+    img.onerror = () => {
+      console.warn(`⚠️ Error cargando imagen ${ASSETS.images[key]}. Se continuará de todas formas.`);
+      checkLoaded();
+    };
+    img.src = ASSETS.images[key];
+    loadedAssets.images[key] = img;
+  });
+
+  // Si hubiera audio, tratar de cargar con oncanplaythrough y onerror similar
+}
+
+// ==============================
+// ESTADOS DEL JUEGO
+// ==============================
+const GAME_STATE = { LOADING: 0, MENU: 1, PLAYING: 2, GAMEOVER: 3 };
 let currentState = GAME_STATE.LOADING;
-let world = null;
-
-// Variables de Control de Lanzamiento
-let isMouseDown = false;
-let mouseJoint = null;
-let mouseX = 0;
-let mouseY = 0;
-let bodiesToDestroy = []; 
-
-// Variables de Juego (HUD y Persistencia)
 let gameScore = 0;
 let launchAttempts = 3;
 let highScore = localStorage.getItem('highScore') || 0;
 
-
-// =========================================================
-// 3. GESTOR DE ACTIVOS (LOADER)
-// =========================================================
-const ASSETS = {
-    images: {
-        background: 'assets/images/background.jpg',
-        //catapult: 'assets/images/catapult.png',
-        wood_box: 'assets/images/wood_box.jpg',
-        //target_image: 'assets/images/target_image.png',
-        //projectile_image: 'assets/images/projectile_image.png'
-    },
-    audio: {
-        //music: 'assets/audio/bkg_music.mp3',
-        //launch_sfx: 'assets/audio/launch.mp3',
-        //hit_sfx: 'assets/audio/hit.mp3'
-    }
-};
-
-let assetsLoadedCount = 0;
-let totalAssets = Object.keys(ASSETS.images).length + Object.keys(ASSETS.audio).length;
-const loadedAssets = { images: {}, audio: {} };
-
-function loadAssets(callback) {
-    const assetKeys = Object.keys(ASSETS.images).concat(Object.keys(ASSETS.audio));
-
-    assetKeys.forEach(key => {
-        const path = ASSETS.images[key] || ASSETS.audio[key];
-        let asset;
-
-        const assetLoaded = () => {
-            assetsLoadedCount++;
-            if (assetsLoadedCount >= totalAssets) callback();
-        };
-
-        if (path.includes('audio')) {
-            asset = new Audio();
-            asset.oncanplaythrough = assetLoaded;
-            loadedAssets.audio[key] = asset;
-        } else {
-            asset = new Image();
-            asset.onload = assetLoaded;
-            loadedAssets.images[key] = asset;
-        }
-        asset.src = path;
-        if (path.includes('audio')) asset.load();
-    });
+// ==============================
+// ADAPTAR / ALIAS A Box2D (defensivo)
+// ==============================
+let Box2DRoot = (typeof Box2D !== 'undefined') ? Box2D : (window.Box2D || null);
+if (!Box2DRoot) {
+  console.error('Box2D no está definido. Asegúrate de que lib/Box2d.min.js se cargue correctamente antes de game.js');
 }
 
-// =========================================================
-// 4. FUNCIONES DE INICIALIZACIÓN DE BOX2D Y HELPERS DE CUERPOS
-// =========================================================
+let b2Vec2, b2World, b2BodyDef, b2Body, b2FixtureDef, b2PolygonShape, b2CircleShape, b2MouseJointDef;
+try {
+  if (Box2DRoot) {
+    // Las rutas dentro del archivo que subiste usan Box2D.Common.Math etc.
+    b2Vec2 = Box2DRoot.Common.Math.b2Vec2;
+    b2World = Box2DRoot.Dynamics.b2World;
+    b2BodyDef = Box2DRoot.Dynamics.b2BodyDef;
+    b2Body = Box2DRoot.Dynamics.b2Body;
+    b2FixtureDef = Box2DRoot.Dynamics.b2FixtureDef;
+    b2PolygonShape = Box2DRoot.Collision.Shapes.b2PolygonShape;
+    b2CircleShape = Box2DRoot.Collision.Shapes.b2CircleShape;
+    b2MouseJointDef = Box2DRoot.Dynamics.Joints.b2MouseJointDef;
+  }
+} catch (err) {
+  console.error('Error al crear aliases para Box2D:', err);
+}
 
+// Verificación rápida
+if (!b2Vec2 || !b2World) {
+  console.warn('Algunos alias de Box2D no se pudieron resolver. Mostrare más detalles y evitaré llamadas que rompan el flujo.');
+}
+
+// ==============================
+// FÍSICA (inicialización segura)
+// ==============================
+let world = null;
 function initPhysics() {
-    world = new b2World(new b2Vec2(0, 10), true); 
-    
-    // === Inicialización del Contact Listener (Paso 2.6) ===
-    let listener = new b2ContactListener();
-    listener.BeginContact = function(contact) {
-        handleCollision(contact, true);
+  try {
+    if (!b2World || !b2Vec2) {
+      throw new Error('Box2D no está disponible (b2World o b2Vec2 undefined).');
     }
-    listener.EndContact = function(contact) {
-        handleCollision(contact, false);
-    }
-    world.SetContactListener(listener);
+    world = new b2World(new b2Vec2(0, 10), true);
+    console.log('Mundo físico creado correctamente');
+  } catch (err) {
+    console.error('No se pudo inicializar la física:', err);
+    world = null;
+  }
 }
 
+// ==============================
+// CREACIÓN DE CUERPOS (robusta)
+// ==============================
 function createBody(x, y, width, height, type, userData, isCircle = false) {
+  if (!world) {
+    console.warn('createBody llamado pero world es null. Se ignorará la creación física.');
+    return null;
+  }
+  try {
     let bodyDef = new b2BodyDef();
-    bodyDef.type = type; 
-    bodyDef.position.Set(x / Game.SCALE, y / Game.SCALE);
-    
+    bodyDef.type = type;
+    bodyDef.position.Set(x / 30, y / 30);
+
     let fixDef = new b2FixtureDef();
     fixDef.density = 1.0;
     fixDef.friction = 0.5;
-    fixDef.restitution = 0.2; 
+    fixDef.restitution = 0.2;
 
+    // Corregir nombre variable y manejar null height para círculos
     if (isCircle) {
-        fixDef.shape = new b2CircleShape(width / Game.SCALE);
-    } else { 
-        fixDef.shape = new b2PolygonShape();
-        fixDef.shape.SetAsBox(width / 2 / Game.SCALE, height / 2 / Game.SCALE);
+      const radius = (width != null) ? (width / 30) : ( (height != null) ? (height/30) : 1 );
+      fixDef.shape = new b2CircleShape(radius);
+    } else {
+      const w = (width != null) ? (width / 2 / 30) : 0.5;
+      const h = (height != null) ? (height / 2 / 30) : 0.5;
+      let shape = new b2PolygonShape();
+      shape.SetAsBox(w, h);
+      fixDef.shape = shape;
     }
 
-    let body = world.CreateBody(bodyDef);
+    const body = world.CreateBody(bodyDef);
     body.CreateFixture(fixDef);
-    body.SetUserData(userData); 
-    
+    body.SetUserData(userData || {});
     return body;
+  } catch (err) {
+    console.error('Error creando cuerpo:', err);
+    return null;
+  }
 }
 
+// ==============================
+// NIVELES / ENTIDADES
+// ==============================
 function setupLevel() {
-    // === CREACIÓN DEL SUELO (Estático) ===
-    createBody(
-        GAME_WIDTH / 2, GAME_HEIGHT - 20, GAME_WIDTH, 40, 
-        b2Body.b2_staticBody, { type: 'ground' }
-    );
+  if (!world) {
+    console.warn('setupLevel ignorado porque world no está inicializado');
+    return;
+  }
+  try {
+    const b2_staticBody = b2Body ? b2Body.b2_staticBody : (Box2DRoot && Box2DRoot.Dynamics && Box2DRoot.Dynamics.b2Body ? Box2DRoot.Dynamics.b2Body.b2_staticBody : 0);
+    const b2_dynamicBody = b2Body ? b2Body.b2_dynamicBody : (Box2DRoot && Box2DRoot.Dynamics && Box2DRoot.Dynamics.b2Body ? Box2DRoot.Dynamics.b2Body.b2_dynamicBody : 2);
 
-    // === ESTRUCTURAS Y OBJETIVOS DE EJEMPLO ===
-    // Bloque Dinámico (Caja)
-    createBody(
-        650, 500, 50, 50, b2Body.b2_dynamicBody, 
-        { type: 'block', image: loadedAssets.images.wood_box, health: 100 }
-    );
-    // Objetivo Dinámico (Círculo) - Este debe ser golpeado
-    createBody(
-        650, 440, 20, null, b2Body.b2_dynamicBody, 
-        { type: 'target', scoreValue: 100, image: loadedAssets.images.target_image },
-        true
-    );
-    // Bloque extra
-    createBody(
-        600, 500, 50, 50, b2Body.b2_dynamicBody, 
-        { type: 'block', image: loadedAssets.images.wood_box, health: 100 }
-    );
-    
-    // === PROYECTIL INICIAL ===
-    Game.spawnProjectile(Game.catapultX, Game.catapultY);
-}
+    // Suelo
+    createBody(400, 580, 800, 40, b2_staticBody, { type: 'ground' });
 
-// =========================================================
-// 5. MANEJO DE COLISIONES (Paso 2.6)
-// =========================================================
-function handleCollision(contact, isBeginning) {
-    if (!isBeginning) return;
-
-    const bodyA = contact.GetFixtureA().GetBody();
-    const bodyB = contact.GetFixtureB().GetBody();
-
-    const userDataA = bodyA.GetUserData();
-    const userDataB = bodyB.GetUserData();
-
-    if (!userDataA || !userDataB) return;
-
-    const typeA = userDataA.type;
-    const typeB = userDataB.type;
-    
-    // Lógica de Colisión: Proyectil golpea un Objetivo (Target)
-    if ( (typeA === 'projectile' && typeB === 'target') || 
-         (typeA === 'target' && typeB === 'projectile') ) {
-        
-        const target = typeA === 'target' ? bodyA : bodyB;
-        
-        if (!target.isDestroyed) { 
-            target.isDestroyed = true;
-            
-            // Sumar puntuación
-            gameScore += target.GetUserData().scoreValue;
-            
-            // Reproducir sonido de impacto
-            loadedAssets.audio.hit_sfx.play();
-            
-            // Marcar el cuerpo para destrucción
-            bodiesToDestroy.push(target);
-        }
-    }
-}
-
-// =========================================================
-// 6. OBJETO Y LÓGICA DEL JUEGO (Game)
-// =========================================================
-const Game = {
-    SCALE: 30, 
-    currentProjectile: null, 
-    catapultX: 100, 
-    catapultY: 500,
-
-    spawnProjectile(x, y) {
-        if (Game.currentProjectile) world.DestroyBody(Game.currentProjectile);
-
-        Game.currentProjectile = createBody(
-            x, y, 25, null, 
-            b2Body.b2_dynamicBody, 
-            { type: 'projectile', image: loadedAssets.images.projectile_image },
-            true
-        );
-        Game.currentProjectile.SetFixedRotation(true);
-        Game.currentProjectile.SetAwake(false);
-    },
-    
-    update() {
-        if (currentState === GAME_STATE.PLAYING) {
-            // Actualización de la física de Box2D
-            world.Step(1 / 60, 10, 10);
-            world.ClearForces();
-            
-            // Actualizar el MouseJoint (Lanzamiento)
-            if (mouseJoint) {
-                mouseJoint.SetTarget(new b2Vec2(mouseX / Game.SCALE, mouseY / Game.SCALE));
-            }
-
-            // === DESTRUCCIÓN SEGURA DE CUERPOS (Paso 2.6) ===
-            for (let i = 0; i < bodiesToDestroy.length; i++) {
-                const body = bodiesToDestroy[i];
-                if (world.IsLocked() === false && body) {
-                    world.DestroyBody(body);
-                }
-            }
-            bodiesToDestroy = []; 
-            
-            // Lógica de Victoria/Derrota/Game Over
-            if (launchAttempts <= 0 && !Game.currentProjectile && world.GetBodyList().GetNext() === null) {
-                // Si se acabaron los intentos y no quedan cuerpos, termina.
-                Game.changeState(GAME_STATE.GAMEOVER);
-                // Actualizar High Score
-                if (gameScore > highScore) {
-                    highScore = gameScore;
-                    localStorage.setItem('highScore', highScore);
-                }
-            }
-        }
-    },
-
-    draw() {
-        ctx.clearRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
-        ctx.fillStyle = '#333';
-        ctx.fillRect(0, 0, GAME_WIDTH, GAME_HEIGHT);
-        ctx.fillStyle = 'white';
-        ctx.font = '24px Arial';
-
-        if (currentState === GAME_STATE.LOADING) {
-            const progressText = `Cargando... (${assetsLoadedCount}/${totalAssets})`;
-            ctx.fillText(progressText, GAME_WIDTH / 2 - ctx.measureText(progressText).width / 2, GAME_HEIGHT / 2);
-
-        } else if (currentState === GAME_STATE.MENU) {
-            const menuWidth = GAME_WIDTH / 2;
-            const menuHeight = GAME_HEIGHT / 2;
-            const menuX = GAME_WIDTH / 4;
-            const menuY = GAME_HEIGHT / 4;
-
-            ctx.fillStyle = 'rgba(173, 216, 230, 0.9)';
-            ctx.fillRect(menuX, menuY, menuWidth, menuHeight);
-            
-            ctx.fillStyle = 'black';
-            ctx.font = '30px Arial';
-            let titleText = 'PUZZLE DE FÍSICA 2D';
-            ctx.fillText(titleText, GAME_WIDTH / 2 - ctx.measureText(titleText).width / 2, GAME_HEIGHT / 2 - 30);
-            
-            ctx.font = '20px Arial';
-            let clickText = 'Haz clic o toca para JUGAR';
-            ctx.fillText(clickText, GAME_WIDTH / 2 - ctx.measureText(clickText).width / 2, GAME_HEIGHT / 2 + 30);
-            ctx.fillText(`High Score: ${highScore}`, GAME_WIDTH / 2 - ctx.measureText(`High Score: ${highScore}`).width / 2, GAME_HEIGHT / 2 + 80);
-
-        } else if (currentState === GAME_STATE.PLAYING) {
-            
-            // 1. Dibujar el fondo
-            ctx.drawImage(loadedAssets.images.background, 0, 0, GAME_WIDTH, GAME_HEIGHT);
-            
-            // 2. Dibujar la Catapulta (Parte estática del UI)
-            ctx.drawImage(loadedAssets.images.catapult, Game.catapultX - 50, Game.catapultY - 50, 100, 100);
-
-            // 3. Dibujo de línea de estiramiento
-            if (isMouseDown && mouseJoint && Game.currentProjectile) {
-                const bodyPos = Game.currentProjectile.GetPosition();
-                const projX = bodyPos.x * Game.SCALE;
-                const projY = bodyPos.y * Game.SCALE;
-
-                ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-                ctx.lineWidth = 3;
-                ctx.beginPath();
-                ctx.moveTo(Game.catapultX, Game.catapultY);
-                ctx.lineTo(projX, projY);
-                ctx.stroke();
-            }
-
-            // 4. Dibujo de OBJETOS FÍSICOS
-            for (let b = world.GetBodyList(); b; b = b.GetNext()) {
-                const userData = b.GetUserData();
-                // Omitir el GroundBody (el primer cuerpo de Box2D)
-                if (b.GetType() === b2Body.b2_staticBody && userData.type !== 'ground') continue;
-
-                if (userData && userData.image) {
-                    const bodyPos = b.GetPosition();
-                    const posX = bodyPos.x * Game.SCALE;
-                    const posY = bodyPos.y * Game.SCALE;
-                    const angle = b.GetAngle();
-                    
-                    ctx.save();
-                    ctx.translate(posX, posY);
-                    ctx.rotate(angle);
-                    
-                    const img = userData.image;
-                    ctx.drawImage(img, -img.width / 2, -img.height / 2, img.width, img.height);
-                    
-                    ctx.restore();
-                }
-            }
-            
-            // 5. Dibuja el HUD
-            ctx.fillStyle = 'white';
-            ctx.fillText(`Intentos: ${launchAttempts}`, 10, 30);
-            ctx.fillText(`Puntuación: ${gameScore}`, 10, 60);
-            ctx.fillText(`High Score: ${highScore}`, 10, 90);
-
-        } else if (currentState === GAME_STATE.GAMEOVER) {
-             // Pantalla de Game Over
-             ctx.fillStyle = 'rgba(255, 0, 0, 0.8)';
-             ctx.fillRect(GAME_WIDTH / 4, GAME_HEIGHT / 4, GAME_WIDTH / 2, GAME_HEIGHT / 2);
-             ctx.fillStyle = 'white';
-             ctx.font = '40px Arial';
-             let goText = 'GAME OVER';
-             ctx.fillText(goText, GAME_WIDTH / 2 - ctx.measureText(goText).width / 2, GAME_HEIGHT / 2 - 30);
-             ctx.font = '24px Arial';
-             let finalScoreText = `Puntuación Final: ${gameScore}`;
-             ctx.fillText(finalScoreText, GAME_WIDTH / 2 - ctx.measureText(finalScoreText).width / 2, GAME_HEIGHT / 2 + 30);
-        }
-    },
-
-    changeState(newState) {
-        currentState = newState;
-    }
-};
-
-// =========================================================
-// 7. BUCLE PRINCIPAL (Game Loop) Y ARRANQUE
-// =========================================================
-let lastTime = 0;
-function gameLoop(timestamp) {
-    const deltaTime = timestamp - lastTime; 
-    lastTime = timestamp;
-
-    Game.update(deltaTime);
-    Game.draw();
-
-    requestAnimationFrame(gameLoop);
-}
-
-function startUp() {
-    initPhysics();
-    
-    loadAssets(() => {
-        setupLevel(); 
-        Game.changeState(GAME_STATE.MENU);
-        requestAnimationFrame(gameLoop);
+    // Bloques
+    createBody(650, 500, 50, 50, b2_dynamicBody, {
+      type: 'block',
+      image: loadedAssets.images.wood_box
     });
-}
-startUp();
 
-// =========================================================
-// 8. MANEJO DE EVENTOS (Mouse y Touch)
-// =========================================================
-function updateMousePos(e) {
-    const rect = canvas.getBoundingClientRect();
-    const clientX = e.clientX || (e.touches && e.touches[0] ? e.touches[0].clientX : 0);
-    const clientY = e.clientY || (e.touches && e.touches[0] ? e.touches[0].clientY : 0);
-    
-    mouseX = clientX - rect.left;
-    mouseY = clientY - rect.top;
-    
-    if (e.touches) e.preventDefault(); 
-}
+    createBody(600, 500, 50, 50, b2_dynamicBody, {
+      type: 'block',
+      image: loadedAssets.images.wood_box
+    });
 
-function handleDown(e) {
-    // Si no estamos jugando, si ya estamos arrastrando, o si no hay proyectil
-    if (currentState !== GAME_STATE.PLAYING || mouseJoint || !Game.currentProjectile) return;
+    // Objetivo (círculo)
+    createBody(650, 440, 20, 20, b2_dynamicBody, {
+      type: 'target',
+      scoreValue: 100,
+      image: loadedAssets.images.target_image
+    }, true);
 
-    updateMousePos(e);
+    // Proyectil
+    spawnProjectile(100, 500);
 
-    const distance = Math.sqrt(Math.pow(mouseX - Game.catapultX, 2) + Math.pow(mouseY - Game.catapultY, 2));
-    if (distance > 100) return;
-
-    isMouseDown = true;
-    const body = Game.currentProjectile; 
-    const mouseWorld = new b2Vec2(mouseX / Game.SCALE, mouseY / Game.SCALE);
-
-    let md = new b2MouseJointDef();
-    md.bodyA = world.GetGroundBody(); 
-    md.bodyB = body;
-    md.target.Set(mouseWorld.x, mouseWorld.y);
-    md.collideConnected = true;
-    md.maxForce = 300.0 * body.GetMass();
-    
-    mouseJoint = world.CreateJoint(md);
-    body.SetAwake(true);
+    console.log('Nivel configurado');
+  } catch (err) {
+    console.error('Error en setupLevel:', err);
+  }
 }
 
-function handleMove(e) {
-    if (!isMouseDown) return;
+// ==============================
+// PROYECTIL
+// ==============================
+let currentProjectile = null;
+function spawnProjectile(x, y) {
+  if (!world) return;
+  try {
+    if (currentProjectile) world.DestroyBody(currentProjectile);
+    currentProjectile = createBody(x, y, 25, 25, (b2Body? b2Body.b2_dynamicBody : 2), {
+      type: 'projectile',
+      image: loadedAssets.images.projectile_image
+    }, true);
+    if (currentProjectile && currentProjectile.SetFixedRotation) currentProjectile.SetFixedRotation(true);
+    if (currentProjectile && currentProjectile.SetAwake) currentProjectile.SetAwake(false);
+  } catch (err) {
+    console.error('Error en spawnProjectile:', err);
+  }
+}
 
-    updateMousePos(e);
-    if (mouseJoint) {
-        // Limitar la distancia de estiramiento a un radio de 100px
-        const limitVector = new b2Vec2(
-            (mouseX - Game.catapultX) / Game.SCALE, 
-            (mouseY - Game.catapultY) / Game.SCALE
-        );
-        
-        if (limitVector.Length() * Game.SCALE > 100) {
-            limitVector.Normalize();
-            limitVector.Multiply(100 / Game.SCALE);
-            
-            const targetX = Game.catapultX / Game.SCALE + limitVector.x;
-            const targetY = Game.catapultY / Game.SCALE + limitVector.y;
-            mouseJoint.SetTarget(new b2Vec2(targetX, targetY));
-        } else {
-            mouseJoint.SetTarget(new b2Vec2(mouseX / Game.SCALE, mouseY / Game.SCALE));
+// ==============================
+// DIBUJO
+// ==============================
+function draw() {
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  if (currentState === GAME_STATE.LOADING) {
+    ctx.fillStyle = 'white';
+    ctx.font = '24px Arial';
+    ctx.fillText('Cargando...', 50, 50);
+    return;
+  }
+
+  if (currentState === GAME_STATE.MENU) {
+    ctx.fillStyle = 'lightblue';
+    ctx.fillRect(200, 150, 400, 300);
+    ctx.fillStyle = 'black';
+    ctx.font = '30px Arial';
+    ctx.fillText('PUZZLE DE FÍSICA 2D', 250, 230);
+    ctx.font = '20px Arial';
+    ctx.fillText('Haz clic para jugar', 300, 300);
+    ctx.fillText(`High Score: ${highScore}`, 280, 350);
+    return;
+  }
+
+  if (currentState === GAME_STATE.PLAYING) {
+    // background
+    if (loadedAssets.images.background && loadedAssets.images.background.complete) {
+      try { ctx.drawImage(loadedAssets.images.background, 0, 0, canvas.width, canvas.height); } catch(e){/* ignore draw errors */ }
+    } else {
+      ctx.fillStyle = '#113';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+    }
+
+    // catapult
+    if (loadedAssets.images.catapult && loadedAssets.images.catapult.complete) {
+      try { ctx.drawImage(loadedAssets.images.catapult, 50, canvas.height - 150, 100, 100); } catch(e){ }
+    }
+
+    if (world) {
+      for (let b = world.GetBodyList(); b; b = b.GetNext()) {
+        const userData = b.GetUserData && b.GetUserData();
+        if (userData && userData.image) {
+          const pos = b.GetPosition();
+          const x = pos.x * 30;
+          const y = pos.y * 30;
+          try { ctx.drawImage(userData.image, x - 25, y - 25, 50, 50); } catch(e) {}
         }
+      }
     }
+
+    // HUD
+    ctx.fillStyle = 'white';
+    ctx.font = '20px Arial';
+    ctx.fillText(`Intentos: ${launchAttempts}`, 10, 30);
+    ctx.fillText(`Puntuación: ${gameScore}`, 10, 60);
+  }
 }
 
-function handleUp() {
-    isMouseDown = false;
-    
-    if (mouseJoint) {
-        world.DestroyJoint(mouseJoint);
-        mouseJoint = null;
-        loadedAssets.audio.launch_sfx.play();
-        launchAttempts--;
-    }
+// ==============================
+// BUCLE
+// ==============================
+function update() {
+  // placeholder para lógica de juego
 }
 
-// Eventos del juego
-canvas.addEventListener('click', (e) => {
-    if (currentState === GAME_STATE.MENU) Game.changeState(GAME_STATE.PLAYING);
-        //falta la logica
-    if (currentState === GAME_STATE.GAMEOVER) {
-        window.location.reload(); 
+function gameLoop() {
+  try {
+    if (currentState === GAME_STATE.PLAYING && world) {
+      world.Step(1 / 60, 10, 10);
+      world.ClearForces && world.ClearForces();
     }
+  } catch (err) {
+    console.error('Error dentro del step de física:', err);
+  }
+  update();
+  draw();
+  requestAnimationFrame(gameLoop);
+}
+
+// ==============================
+// CONTROL DE MOUSE / CLICS
+// ==============================
+canvas.addEventListener('click', () => {
+  if (currentState === GAME_STATE.MENU) {
+    currentState = GAME_STATE.PLAYING;
+    console.log('Estado -> PLAYING');
+  } else if (currentState === GAME_STATE.PLAYING) {
+    // ejemplo: respawn proyectil si haces click
+    spawnProjectile(100, canvas.height - 100);
+  }
 });
 
-// Eventos de interacción (Mouse y Touch)
-canvas.addEventListener('mousedown', handleDown);
-canvas.addEventListener('touchstart', handleDown);
-canvas.addEventListener('mousemove', handleMove);
-canvas.addEventListener('touchmove', handleMove);
-canvas.addEventListener('mouseup', handleUp);
-canvas.addEventListener('touchend', handleUp);
+// ==============================
+// INICIO
+// ==============================
+function startGame() {
+  console.log('startGame: iniciando...');
+  currentState = GAME_STATE.LOADING;
+  initPhysics();
+  loadAssets(() => {
+    try {
+      setupLevel();
+      currentState = GAME_STATE.MENU;
+      requestAnimationFrame(gameLoop);
+      console.log('Juego arrancado. Estado MENU');
+    } catch (err) {
+      console.error('Error al iniciar nivel / gameLoop:', err);
+    }
+  });
+}
+
+// Si quieres ver logs inmediatos
+console.log('game.js cargado - iniciando startGame()');
+startGame();
