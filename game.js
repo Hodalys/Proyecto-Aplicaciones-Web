@@ -1,345 +1,575 @@
-// game.js (versión robusta adaptada a Box2d local)
 
-// ==============================
-// CONFIGURACIÓN DEL CANVAS
-// ==============================
-const canvas = document.getElementById('game-canvas');
-const ctx = canvas.getContext('2d');
-function resizeCanvas() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-}
-resizeCanvas();
-window.addEventListener('resize', resizeCanvas);
-// Visual aid para verificar que el canvas existe
-canvas.style.backgroundColor = '#000'; // luego puedes quitarlo
+// Box2D Aliases - Se inicializarán cuando Box2D esté disponible
+let b2World, b2Vec2, b2BodyDef, b2Body, b2FixtureDef, b2PolygonShape, b2CircleShape, b2MouseJointDef, b2DistanceJointDef;
+let b2DebugDraw;
 
-// ==============================
-// DEFINICIÓN DE ASSETS
-// ==============================
-const ASSETS = {
-  images: {
+// Game Constants
+const SCALE = 30; // 30 pixels = 1 meter
+let GRAVITY; // Se inicializará después de que Box2D esté disponible
+
+// Game State
+const GameState = {
+    MENU: 'menu',
+    PLAYING: 'playing',
+    PAUSED: 'paused',
+    GAME_OVER: 'game-over',
+    LEVEL_COMPLETE: 'level-complete'
+};
+let currentGameState = GameState.MENU;
+
+// Game Variables
+let canvas, ctx;
+let world;
+let debugDraw;
+let lastTime = 0;
+let isMouseDown = false;
+let mouseJoint = null;
+let projectile = null;
+let catapult;
+let ground;
+
+// Image Assets
+const images = {};
+const imageSources = {
     background: 'assets/images/background.png',
     catapult: 'assets/images/catapult.png',
-    wood_box: 'assets/images/wood_box.png',
-    target_image: 'assets/images/target.jpg',
-    projectile_image: 'assets/images/projectile_image.jpg'
-  },
-  audio: {
-    // rellenar si tienes audio
-  }
+    projectile: 'assets/images/projectile_image.jpg',
+    box: 'assets/images/wood_box.png',
+    target: 'assets/images/target.jpg'
 };
 
-const loadedAssets = { images: {}, audio: {} };
-
-// ==============================
-// CARGA DE ASSETS (con fallback y callback)
-// ==============================
-function loadAssets(callback) {
-  const imageKeys = Object.keys(ASSETS.images);
-  const audioKeys = Object.keys(ASSETS.audio || {});
-  const totalAssets = imageKeys.length + audioKeys.length;
-  let assetsLoaded = 0;
-
-  const checkLoaded = () => {
-    assetsLoaded++;
-    console.log(`Asset cargado (${assetsLoaded}/${totalAssets})`);
-    if (assetsLoaded === totalAssets) {
-      console.log("✅ Todos los assets cargados correctamente");
-      callback();
+function preloadImages(callback) {
+    let loaded = 0;
+    const numImages = Object.keys(imageSources).length;
+    for (const key in imageSources) {
+        images[key] = new Image();
+        images[key].src = imageSources[key];
+        images[key].onload = () => {
+            if (++loaded >= numImages) {
+                callback();
+            }
+        };
+        images[key].onerror = () => {
+            console.error(`Failed to load image: ${imageSources[key]}`);
+            if (++loaded >= numImages) {
+                callback();
+            }
+        };
     }
-  };
-
-  // Si no hay assets, llama al callback inmediatamente
-  if (totalAssets === 0) {
-    console.log("No hay assets a cargar");
-    callback();
-    return;
-  }
-
-  imageKeys.forEach(key => {
-    const img = new Image();
-    img.onload = checkLoaded;
-    img.onerror = () => {
-      console.warn(`⚠️ Error cargando imagen ${ASSETS.images[key]}. Se continuará de todas formas.`);
-      checkLoaded();
-    };
-    img.src = ASSETS.images[key];
-    loadedAssets.images[key] = img;
-  });
-
-  // Si hubiera audio, tratar de cargar con oncanplaythrough y onerror similar
 }
 
-// ==============================
-// ESTADOS DEL JUEGO
-// ==============================
-const GAME_STATE = { LOADING: 0, MENU: 1, PLAYING: 2, GAMEOVER: 3 };
-let currentState = GAME_STATE.LOADING;
-let gameScore = 0;
-let launchAttempts = 3;
-let highScore = localStorage.getItem('highScore') || 0;
-
-// ==============================
-// ADAPTAR / ALIAS A Box2D (defensivo)
-// ==============================
-let Box2DRoot = (typeof Box2D !== 'undefined') ? Box2D : (window.Box2D || null);
-if (!Box2DRoot) {
-  console.error('Box2D no está definido. Asegúrate de que lib/Box2d.min.js se cargue correctamente antes de game.js');
-}
-
-let b2Vec2, b2World, b2BodyDef, b2Body, b2FixtureDef, b2PolygonShape, b2CircleShape, b2MouseJointDef;
-try {
-  if (Box2DRoot) {
-    // Las rutas dentro del archivo que subiste usan Box2D.Common.Math etc.
-    b2Vec2 = Box2DRoot.Common.Math.b2Vec2;
-    b2World = Box2DRoot.Dynamics.b2World;
-    b2BodyDef = Box2DRoot.Dynamics.b2BodyDef;
-    b2Body = Box2DRoot.Dynamics.b2Body;
-    b2FixtureDef = Box2DRoot.Dynamics.b2FixtureDef;
-    b2PolygonShape = Box2DRoot.Collision.Shapes.b2PolygonShape;
-    b2CircleShape = Box2DRoot.Collision.Shapes.b2CircleShape;
-    b2MouseJointDef = Box2DRoot.Dynamics.Joints.b2MouseJointDef;
-  }
-} catch (err) {
-  console.error('Error al crear aliases para Box2D:', err);
-}
-
-// Verificación rápida
-if (!b2Vec2 || !b2World) {
-  console.warn('Algunos alias de Box2D no se pudieron resolver. Mostrare más detalles y evitaré llamadas que rompan el flujo.');
-}
-
-// ==============================
-// FÍSICA (inicialización segura)
-// ==============================
-let world = null;
-function initPhysics() {
-  try {
-    if (!b2World || !b2Vec2) {
-      throw new Error('Box2D no está disponible (b2World o b2Vec2 undefined).');
+// Inicializar Box2D cuando esté disponible
+function initBox2D() {
+    if (typeof Box2D === 'undefined') {
+        console.error('Box2D no está disponible');
+        return false;
     }
-    world = new b2World(new b2Vec2(0, 10), true);
-    console.log('Mundo físico creado correctamente');
-  } catch (err) {
-    console.error('No se pudo inicializar la física:', err);
-    world = null;
-  }
+    
+    try {
+        // Obtener referencias de Box2D
+        const dynamics = Box2D.Dynamics;
+        const common = Box2D.Common;
+        const collision = Box2D.Collision;
+        const shapes = collision.Shapes;
+        const math = common.Math;
+        const joints = dynamics.Joints;
+        
+        b2World = dynamics.b2World;
+        b2Vec2 = math.b2Vec2;
+        b2BodyDef = dynamics.b2BodyDef;
+        b2Body = dynamics.b2Body;
+        b2FixtureDef = dynamics.b2FixtureDef;
+        b2PolygonShape = shapes.b2PolygonShape;
+        b2CircleShape = shapes.b2CircleShape;
+        b2MouseJointDef = joints.b2MouseJointDef;
+        b2DistanceJointDef = joints.b2DistanceJointDef;
+        
+        if (dynamics.b2DebugDraw) {
+            b2DebugDraw = dynamics.b2DebugDraw;
+        }
+        
+        GRAVITY = new b2Vec2(0, 10);
+        console.log('Box2D inicializado correctamente');
+        return true;
+    } catch (e) {
+        console.error('Error al inicializar Box2D:', e);
+        return false;
+    }
 }
 
-// ==============================
-// CREACIÓN DE CUERPOS (robusta)
-// ==============================
-function createBody(x, y, width, height, type, userData, isCircle = false) {
-  if (!world) {
-    console.warn('createBody llamado pero world es null. Se ignorará la creación física.');
-    return null;
-  }
-  try {
-    let bodyDef = new b2BodyDef();
-    bodyDef.type = type;
-    bodyDef.position.Set(x / 30, y / 30);
 
-    let fixDef = new b2FixtureDef();
-    fixDef.density = 1.0;
-    fixDef.friction = 0.5;
-    fixDef.restitution = 0.2;
+// UI & Level Data
+let currentLevel = 0;
+let highScore = 0;
+let isMuted = false;
+let timer = 0;
+let levelUI, highScoreUI, pauseButton, muteButton, timerUI;
 
-    // Corregir nombre variable y manejar null height para círculos
-    if (isCircle) {
-      const radius = (width != null) ? (width / 30) : ( (height != null) ? (height/30) : 1 );
-      fixDef.shape = new b2CircleShape(radius);
+const levels = [
+    // Level 1
+    {
+        boxes: [
+            { x: 18, y: 15, width: 2, height: 2, type: 'static' },
+            { x: 18, y: 13, width: 2, height: 2, type: 'static' },
+        ],
+        target: { x: 18, y: 11, width: 1.5, height: 1.5 },
+        time: 45
+    },
+    // Level 2
+    {
+        boxes: [
+            { x: 15, y: 15, width: 1, height: 5, type: 'static' },
+            { x: 20, y: 15, width: 1, height: 5, type: 'static' },
+            { x: 17.5, y: 12, width: 6, height: 1, type: 'static' }
+        ],
+        target: { x: 17.5, y: 11, width: 1.5, height: 1.5 },
+        time: 60
+    },
+    // Level 3
+    {
+        boxes: [
+            { x: 14, y: 15, width: .5, height: 8, type: 'static' },
+            { x: 22, y: 15, width: .5, height: 8, type: 'static' },
+            { x: 18, y: 10, width: 8, height: .5, type: 'static' },
+            { x: 18, y: 15, width: 1, height: 1, type: 'dynamic' },
+        ],
+        target: { x: 18, y: 9, width: 1.5, height: 1.5 },
+        time: 75
+    }
+];
+
+
+// --- Initialization ---
+window.onload = function() {
+    try {
+        // Inicializar Box2D primero
+        if (!initBox2D()) {
+            alert('Error: Box2D no se pudo cargar. Por favor, recarga la página.');
+            return;
+        }
+        
+        canvas = document.getElementById('gameCanvas');
+        
+        // Establecer dimensiones del canvas
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+        
+        ctx = canvas.getContext('2d');
+        levelUI = document.getElementById('level');
+        highScoreUI = document.getElementById('high-score');
+        pauseButton = document.getElementById('pause-button');
+        muteButton = document.getElementById('mute-button');
+        timerUI = document.getElementById('timer');
+
+        highScore = localStorage.getItem('highScore') || 0;
+        highScoreUI.textContent = highScore;
+
+        preloadImages(() => {
+            setupUI();
+            window.addEventListener('resize', resizeCanvas);
+
+            world = new b2World(GRAVITY, true);
+            addEventListeners();
+
+            // Start with the menu
+            currentGameState = GameState.MENU;
+
+            requestAnimationFrame(gameLoop);
+        });
+    } catch (e) {
+        console.error('Error during initialization:', e);
+        alert('An error occurred during game initialization. Please check the console for details.');
+    }
+};
+
+function setupUI() {
+    pauseButton.addEventListener('click', () => {
+        if (currentGameState === GameState.PLAYING) pauseGame();
+        else if (currentGameState === GameState.PAUSED) resumeGame();
+    });
+    muteButton.addEventListener('click', () => {
+        isMuted = !isMuted;
+        muteButton.textContent = isMuted ? 'Unmute' : 'Mute';
+    });
+}
+
+function addEventListeners() {
+    canvas.addEventListener('mousedown', handleMouseDown);
+    canvas.addEventListener('mousemove', handleMouseMove);
+    canvas.addEventListener('mouseup', handleMouseUp);
+    canvas.addEventListener('touchstart', (e) => { e.preventDefault(); handleMouseDown(e.touches[0]); });
+    canvas.addEventListener('touchmove', (e) => { e.preventDefault(); handleMouseMove(e.touches[0]); });
+    canvas.addEventListener('touchend', (e) => { e.preventDefault(); handleMouseUp(e.changedTouches[0]); });
+}
+
+// --- Game Loop ---
+function gameLoop(timestamp) {
+    const deltaTime = (timestamp - lastTime) / 1000;
+    lastTime = timestamp;
+
+    update(deltaTime);
+    draw();
+
+    requestAnimationFrame(gameLoop);
+}
+
+function update(deltaTime) {
+    switch (currentGameState) {
+        case GameState.PLAYING:
+            world.Step(deltaTime, 8, 3);
+            world.ClearForces();
+            timer -= deltaTime;
+            if (timer <= 0) {
+                timer = 0;
+                gameOver();
+            }
+            break;
+        case GameState.MENU:
+        case GameState.PAUSED:
+        case GameState.GAME_OVER:
+        case GameState.LEVEL_COMPLETE:
+            // Don't step the world
+            break;
+    }
+    updateHUD();
+}
+
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Dibujar fondo si está disponible, si no usar color de fallback
+    if (images.background && images.background.complete) {
+        ctx.drawImage(images.background, 0, 0, canvas.width, canvas.height);
     } else {
-      const w = (width != null) ? (width / 2 / 30) : 0.5;
-      const h = (height != null) ? (height / 2 / 30) : 0.5;
-      let shape = new b2PolygonShape();
-      shape.SetAsBox(w, h);
-      fixDef.shape = shape;
+        ctx.fillStyle = '#333';
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
+
+    // Solo dibujar cuerpos si el juego está en progreso
+    if (currentGameState === GameState.PLAYING) {
+        drawBodies();
+    }
+
+    switch (currentGameState) {
+        case GameState.MENU:
+            drawMenu();
+            break;
+        case GameState.PAUSED:
+            drawPaused();
+            break;
+        case GameState.GAME_OVER:
+            drawGameOver();
+            break;
+        case GameState.LEVEL_COMPLETE:
+            drawLevelComplete();
+            break;
+    }
+}
+
+function drawBodies() {
+    for (let body = world.GetBodyList(); body; body = body.GetNext()) {
+        const position = body.GetPosition();
+        const angle = body.GetAngle();
+        const userData = body.GetUserData();
+
+        if (userData && userData.type) {
+            ctx.save();
+            ctx.translate(position.x * SCALE, position.y * SCALE);
+            ctx.rotate(angle);
+
+            const fixture = body.GetFixtureList();
+            const shape = fixture.GetShape();
+            let width, height, radius;
+            
+            let img;
+            switch (userData.type) {
+                case 'projectile':
+                    img = images.projectile;
+                    radius = shape.GetRadius() * SCALE;
+                    ctx.drawImage(img, -radius, -radius, radius * 2, radius * 2);
+                    break;
+                case 'box':
+                    img = images.box;
+                    width = shape.GetVertices()[1].x * SCALE * 2;
+                    height = shape.GetVertices()[2].y * SCALE * 2;
+                    ctx.drawImage(img, -width / 2, -height / 2, width, height);
+                    break;
+                case 'target':
+                    img = images.target;
+                    width = shape.GetVertices()[1].x * SCALE * 2;
+                    height = shape.GetVertices()[2].y * SCALE * 2;
+                    ctx.drawImage(img, -width / 2, -height / 2, width, height);
+                    break;
+            }
+            ctx.restore();
+        }
+    }
+    // Draw catapult image separately as it's static and doesn't have a body in the same way
+    if (catapult) {
+        const pos = catapult.GetPosition();
+        ctx.save();
+        ctx.translate(pos.x * SCALE, pos.y * SCALE);
+        ctx.drawImage(images.catapult, -30, -50, 60, 100); // Adjust size as needed
+        ctx.restore();
+    }
+}
+
+
+function drawMenu() {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'white';
+    ctx.font = '48px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Angry Birds Clone', canvas.width / 2, canvas.height / 2 - 100);
+    ctx.font = '24px sans-serif';
+    ctx.fillText('Click to Start', canvas.width / 2, canvas.height / 2 + 50);
+    canvas.addEventListener('click', startGame, { once: true });
+}
+
+function drawPaused() {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'white';
+    ctx.font = '48px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Paused', canvas.width / 2, canvas.height / 2);
+}
+
+function drawGameOver() {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'white';
+    ctx.font = '48px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Game Over', canvas.width / 2, canvas.height / 2 - 50);
+    ctx.font = '24px sans-serif';
+    ctx.fillText('Click to Restart', canvas.width / 2, canvas.height / 2 + 50);
+    canvas.addEventListener('click', () => window.location.reload(), { once: true });
+}
+
+function drawLevelComplete() {
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = 'white';
+    ctx.font = '48px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('Level Complete!', canvas.width / 2, canvas.height / 2 - 50);
+    ctx.font = '24px sans-serif';
+    ctx.fillText('Click to Continue', canvas.width / 2, canvas.height / 2 + 50);
+    canvas.addEventListener('click', () => {
+        currentLevel++;
+        if (currentLevel >= levels.length) {
+            currentGameState = GameState.GAME_OVER;
+        } else {
+            loadLevel(currentLevel);
+            currentGameState = GameState.PLAYING;
+        }
+    }, { once: true });
+}
+
+
+// --- Game State Management ---
+function startGame() {
+    currentGameState = GameState.PLAYING;
+    loadLevel(currentLevel);
+}
+
+function pauseGame() {
+    currentGameState = GameState.PAUSED;
+    pauseButton.textContent = 'Resume';
+}
+
+function resumeGame() {
+    currentGameState = GameState.PLAYING;
+    pauseButton.textContent = 'Pause';
+}
+
+function gameOver() {
+    currentGameState = GameState.GAME_OVER;
+    if (currentLevel > highScore) {
+        highScore = currentLevel;
+        localStorage.setItem('highScore', highScore);
+    }
+}
+
+function levelComplete() {
+    currentGameState = GameState.LEVEL_COMPLETE;
+    if (currentLevel + 1 > highScore) {
+        highScore = currentLevel + 1;
+        localStorage.setItem('highScore', highScore);
+    }
+}
+
+function updateHUD() {
+    levelUI.textContent = currentLevel + 1;
+    highScoreUI.textContent = highScore;
+    timerUI.textContent = Math.ceil(timer);
+}
+
+// --- Level Loading ---
+function loadLevel(levelIndex) {
+    // Clear existing bodies
+    let body = world.GetBodyList();
+    while (body) {
+        const next = body.GetNext();
+        world.DestroyBody(body);
+        body = next;
+    }
+
+    const level = levels[levelIndex];
+    timer = level.time;
+
+    // Create Ground
+    ground = createBox(canvas.width / 2 / SCALE, (canvas.height - 10) / SCALE, canvas.width / SCALE, 20 / SCALE, 'static');
+
+    // Create Catapult
+    catapult = createBox(5, 15, 0.5, 3, 'static');
+
+    // Create Projectile
+    projectile = createCircle(5, 13, 1);
+    projectile.SetUserData({ type: 'projectile' });
+
+
+    // Create Boxes
+    level.boxes.forEach(box => {
+        const newBox = createBox(box.x, box.y, box.width, box.height, box.type);
+        newBox.SetUserData({type: 'box'});
+    });
+
+    // Create Target
+    const targetBox = createBox(level.target.x, level.target.y, level.target.width, level.target.height, 'dynamic');
+    targetBox.SetUserData({ type: 'target' });
+
+
+    setupContactListener();
+}
+
+// --- Box2D Object Creation ---
+function createBox(x, y, width, height, type) {
+    const bodyDef = new b2BodyDef();
+    bodyDef.type = type === 'dynamic' ? b2Body.b2_dynamicBody : b2Body.b2_staticBody;
+    bodyDef.position.Set(x, y);
+
+    const fixtureDef = new b2FixtureDef();
+    fixtureDef.shape = new b2PolygonShape();
+    fixtureDef.shape.SetAsBox(width / 2, height / 2);
+    fixtureDef.density = 1.0;
+    fixtureDef.friction = 0.5;
+    fixtureDef.restitution = 0.2;
 
     const body = world.CreateBody(bodyDef);
-    body.CreateFixture(fixDef);
-    body.SetUserData(userData || {});
+    body.CreateFixture(fixtureDef);
     return body;
-  } catch (err) {
-    console.error('Error creando cuerpo:', err);
-    return null;
-  }
 }
 
-// ==============================
-// NIVELES / ENTIDADES
-// ==============================
-function setupLevel() {
-  if (!world) {
-    console.warn('setupLevel ignorado porque world no está inicializado');
-    return;
-  }
-  try {
-    const b2_staticBody = b2Body ? b2Body.b2_staticBody : (Box2DRoot && Box2DRoot.Dynamics && Box2DRoot.Dynamics.b2Body ? Box2DRoot.Dynamics.b2Body.b2_staticBody : 0);
-    const b2_dynamicBody = b2Body ? b2Body.b2_dynamicBody : (Box2DRoot && Box2DRoot.Dynamics && Box2DRoot.Dynamics.b2Body ? Box2DRoot.Dynamics.b2Body.b2_dynamicBody : 2);
+function createCircle(x, y, radius) {
+    const bodyDef = new b2BodyDef();
+    bodyDef.type = b2Body.b2_dynamicBody;
+    bodyDef.position.Set(x, y);
 
-    // Suelo
-    createBody(400, 580, 800, 40, b2_staticBody, { type: 'ground' });
+    const fixtureDef = new b2FixtureDef();
+    fixtureDef.shape = new b2CircleShape(radius);
+    fixtureDef.density = 1.5;
+    fixtureDef.friction = 0.5;
+    fixtureDef.restitution = 0.4;
 
-    // Bloques
-    createBody(650, 500, 50, 50, b2_dynamicBody, {
-      type: 'block',
-      image: loadedAssets.images.wood_box
-    });
-
-    createBody(600, 500, 50, 50, b2_dynamicBody, {
-      type: 'block',
-      image: loadedAssets.images.wood_box
-    });
-
-    // Objetivo (círculo)
-    createBody(650, 440, 20, 20, b2_dynamicBody, {
-      type: 'target',
-      scoreValue: 100,
-      image: loadedAssets.images.target_image
-    }, true);
-
-    // Proyectil
-    spawnProjectile(100, 500);
-
-    console.log('Nivel configurado');
-  } catch (err) {
-    console.error('Error en setupLevel:', err);
-  }
+    const body = world.CreateBody(bodyDef);
+    body.CreateFixture(fixtureDef);
+    return body;
 }
 
-// ==============================
-// PROYECTIL
-// ==============================
-let currentProjectile = null;
-function spawnProjectile(x, y) {
-  if (!world) return;
-  try {
-    if (currentProjectile) world.DestroyBody(currentProjectile);
-    currentProjectile = createBody(x, y, 25, 25, (b2Body? b2Body.b2_dynamicBody : 2), {
-      type: 'projectile',
-      image: loadedAssets.images.projectile_image
-    }, true);
-    if (currentProjectile && currentProjectile.SetFixedRotation) currentProjectile.SetFixedRotation(true);
-    if (currentProjectile && currentProjectile.SetAwake) currentProjectile.SetAwake(false);
-  } catch (err) {
-    console.error('Error en spawnProjectile:', err);
-  }
-}
+// --- Input Handling ---
+function handleMouseDown(e) {
+    if (currentGameState !== GameState.PLAYING || mouseJoint) return;
 
-// ==============================
-// DIBUJO
-// ==============================
-function draw() {
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const point = getMouseCoords(e);
+    const aabb = new Box2D.Collision.b2AABB();
+    aabb.lowerBound.Set(point.x - 0.001, point.y - 0.001);
+    aabb.upperBound.Set(point.x + 0.001, point.y + 0.001);
 
-  if (currentState === GAME_STATE.LOADING) {
-    ctx.fillStyle = 'white';
-    ctx.font = '24px Arial';
-    ctx.fillText('Cargando...', 50, 50);
-    return;
-  }
-
-  if (currentState === GAME_STATE.MENU) {
-    ctx.fillStyle = 'lightblue';
-    ctx.fillRect(200, 150, 400, 300);
-    ctx.fillStyle = 'black';
-    ctx.font = '30px Arial';
-    ctx.fillText('PUZZLE DE FÍSICA 2D', 250, 230);
-    ctx.font = '20px Arial';
-    ctx.fillText('Haz clic para jugar', 300, 300);
-    ctx.fillText(`High Score: ${highScore}`, 280, 350);
-    return;
-  }
-
-  if (currentState === GAME_STATE.PLAYING) {
-    // background
-    if (loadedAssets.images.background && loadedAssets.images.background.complete) {
-      try { ctx.drawImage(loadedAssets.images.background, 0, 0, canvas.width, canvas.height); } catch(e){/* ignore draw errors */ }
-    } else {
-      ctx.fillStyle = '#113';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-    }
-
-    // catapult
-    if (loadedAssets.images.catapult && loadedAssets.images.catapult.complete) {
-      try { ctx.drawImage(loadedAssets.images.catapult, 50, canvas.height - 150, 100, 100); } catch(e){ }
-    }
-
-    if (world) {
-      for (let b = world.GetBodyList(); b; b = b.GetNext()) {
-        const userData = b.GetUserData && b.GetUserData();
-        if (userData && userData.image) {
-          const pos = b.GetPosition();
-          const x = pos.x * 30;
-          const y = pos.y * 30;
-          try { ctx.drawImage(userData.image, x - 25, y - 25, 50, 50); } catch(e) {}
+    world.QueryAABB(fixture => {
+        if (fixture.GetBody().GetType() !== b2Body.b2_staticBody) {
+            if (fixture.GetShape().TestPoint(fixture.GetBody().GetTransform(), point)) {
+                const md = new b2MouseJointDef();
+                md.bodyA = ground;
+                md.bodyB = fixture.GetBody();
+                md.target.Set(point.x, point.y);
+                md.maxForce = 300.0 * fixture.GetBody().GetMass();
+                mouseJoint = world.CreateJoint(md);
+                fixture.GetBody().SetAwake(true);
+                isMouseDown = true;
+                return false; // Stop searching
+            }
         }
-      }
+        return true;
+    }, aabb);
+}
+
+function handleMouseMove(e) {
+    if (!isMouseDown || !mouseJoint) return;
+    const point = getMouseCoords(e);
+    mouseJoint.SetTarget(new b2Vec2(point.x, point.y));
+}
+
+function handleMouseUp(e) {
+    if (!isMouseDown || !mouseJoint) return;
+
+    const projectileBody = mouseJoint.GetBodyB();
+    if (projectileBody.GetUserData() && projectileBody.GetUserData().type === 'projectile') {
+        const catapultPosition = catapult.GetPosition();
+        const projectilePosition = projectileBody.GetPosition();
+        const force = new b2Vec2(
+            (catapultPosition.x - projectilePosition.x) * 150,
+            (catapultPosition.y - projectilePosition.y) * 150
+        );
+        projectileBody.ApplyImpulse(force, projectileBody.GetWorldCenter());
     }
 
-    // HUD
-    ctx.fillStyle = 'white';
-    ctx.font = '20px Arial';
-    ctx.fillText(`Intentos: ${launchAttempts}`, 10, 30);
-    ctx.fillText(`Puntuación: ${gameScore}`, 10, 60);
-  }
+    world.DestroyJoint(mouseJoint);
+    mouseJoint = null;
+    isMouseDown = false;
 }
 
-// ==============================
-// BUCLE
-// ==============================
-function update() {
-  // placeholder para lógica de juego
+function getMouseCoords(e) {
+    const rect = canvas.getBoundingClientRect();
+    const x = (e.clientX - rect.left) / SCALE;
+    const y = (e.clientY - rect.top) / SCALE;
+    return new b2Vec2(x, y);
 }
 
-function gameLoop() {
-  try {
-    if (currentState === GAME_STATE.PLAYING && world) {
-      world.Step(1 / 60, 10, 10);
-      world.ClearForces && world.ClearForces();
+
+// --- Collision Detection ---
+function setupContactListener() {
+    const listener = new Box2D.Dynamics.b2ContactListener();
+    listener.BeginContact = (contact) => {
+        const fixtureA = contact.GetFixtureA();
+        const fixtureB = contact.GetFixtureB();
+        const bodyA = fixtureA.GetBody();
+        const bodyB = fixtureB.GetBody();
+
+        const userDataA = bodyA.GetUserData();
+        const userDataB = bodyB.GetUserData();
+
+        if (userDataA && userDataB) {
+            // Projectile hits target
+            if ((userDataA.type === 'projectile' && userDataB.type === 'target') ||
+                (userDataA.type === 'target' && userDataB.type === 'projectile')) {
+                levelComplete();
+            }
+        }
+    };
+    world.SetContactListener(listener);
+}
+
+
+// --- Utility Functions ---
+function resizeCanvas() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    if (world) {
+        // Recreate ground
+        if(ground) world.DestroyBody(ground);
+        ground = createBox(canvas.width / 2 / SCALE, (canvas.height - 10) / SCALE, canvas.width / SCALE, 20 / SCALE, 'static');
     }
-  } catch (err) {
-    console.error('Error dentro del step de física:', err);
-  }
-  update();
-  draw();
-  requestAnimationFrame(gameLoop);
 }
-
-// ==============================
-// CONTROL DE MOUSE / CLICS
-// ==============================
-canvas.addEventListener('click', () => {
-  if (currentState === GAME_STATE.MENU) {
-    currentState = GAME_STATE.PLAYING;
-    console.log('Estado -> PLAYING');
-  } else if (currentState === GAME_STATE.PLAYING) {
-    // ejemplo: respawn proyectil si haces click
-    spawnProjectile(100, canvas.height - 100);
-  }
-});
-
-// ==============================
-// INICIO
-// ==============================
-function startGame() {
-  console.log('startGame: iniciando...');
-  currentState = GAME_STATE.LOADING;
-  initPhysics();
-  loadAssets(() => {
-    try {
-      setupLevel();
-      currentState = GAME_STATE.MENU;
-      requestAnimationFrame(gameLoop);
-      console.log('Juego arrancado. Estado MENU');
-    } catch (err) {
-      console.error('Error al iniciar nivel / gameLoop:', err);
-    }
-  });
-}
-
-// Si quieres ver logs inmediatos
-console.log('game.js cargado - iniciando startGame()');
-startGame();

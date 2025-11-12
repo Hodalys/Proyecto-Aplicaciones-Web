@@ -1,0 +1,109 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Angry Birds - Start</title>
+  <link rel="preload" as="image" href="assets/images/background.png">
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    /* Paleta con acentos verdosos */
+    :root { --primary: #2fa46e; --primary-strong:#1d8b5b; --dark: #0f2d2a; --light: #eefaf4; --accent: #a8dadc; }
+
+    body.start-screen {
+      margin:0; min-height:100vh; display:grid; place-items:center;
+      background:
+        linear-gradient(180deg, #0c2b22 0%, #154c3c 50%, #1b5e4a 100%),
+        url('assets/images/background.png') center/cover no-repeat fixed;
+      color:var(--light);
+      font-family: system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,Helvetica,Arial;
+    }
+
+    .start-card {
+      width:min(92vw,720px);
+      background: rgba(8, 36, 30, 0.82);
+      backdrop-filter: blur(6px);
+      border:1px solid rgba(255,255,255,0.08);
+      border-radius:18px; padding:28px;
+      box-shadow:0 10px 30px rgba(0,0,0,0.45);
+      display:grid; gap:18px; text-align:center;
+    }
+
+    .title { font-size:clamp(28px,4vw,40px); margin:0; letter-spacing:.5px; text-shadow:0 2px 8px rgba(0,0,0,0.4); }
+    .subtitle { margin:0; opacity:.9; }
+    .hero { display:grid; grid-template-columns:1fr; gap:16px; align-items:center; }
+
+    .art {
+      width:100%; height:220px; border-radius:14px;
+      background:
+        radial-gradient(80% 100% at 50% 0%, rgba(255,255,255,0.08), transparent 70%),
+        url('assets/images/catapult.png') center/contain no-repeat,
+        linear-gradient(135deg,#0f3d33 0%, #0a2b23 100%);
+      border:1px solid rgba(255,255,255,0.08);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
+    }
+
+    .actions { display:grid; gap:12px; margin-top:8px; }
+
+    .btn { display:inline-grid; place-items:center; padding:14px 18px; border:none; border-radius:12px; font-weight:700; cursor:pointer; text-decoration:none; transition: transform .06s ease, filter .2s ease, background .2s ease; user-select:none; }
+    .btn:active { transform: translateY(1px); }
+
+    .btn-primary {
+      background: linear-gradient(180deg, #43c98a 0%, var(--primary) 100%);
+      color:#0b231d;
+      box-shadow: 0 8px 18px rgba(47, 164, 110, 0.35);
+      border: 1px solid rgba(0,0,0,0.15);
+    }
+    .btn-primary:hover { filter: brightness(1.06); }
+
+    .btn-secondary { background: rgba(255,255,255,0.08); color:var(--light); border:1px solid rgba(255,255,255,0.14); }
+
+    .meta { display:grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap:10px; margin-top:6px; color:#d6f5e7; opacity:.9; font-size:14px; }
+    .footer-note { margin-top:6px; font-size:12px; opacity:.75; }
+
+    @media (min-width:700px){ .hero { grid-template-columns:1.2fr 1fr; } .art { height:260px; } }
+  </style>
+</head>
+<body class="start-screen">
+  <main class="start-card" role="main">
+    <header>
+      <h1 class="title">Angry Birds - Physics Demo</h1>
+      <p class="subtitle">Lanza el proyectil con la catapulta y derriba los objetivos.</p>
+    </header>
+
+    <section class="hero">
+      <div class="art" aria-hidden="true"></div>
+      <div>
+        <div class="meta" aria-hidden="true">
+          <div>Motor: Box2D</div>
+          <div>Modo: Sandbox</div>
+          <div>Dispositivo: Desktop/Móvil</div>
+        </div>
+        <div class="actions">
+          <button id="go-start" class="btn btn-primary" type="button">Start</button>
+          <a class="btn btn-secondary" href="#" onclick="alert('Cómo jugar: Arrastra el proyectil hacia atrás y suéltalo para disparar.'); return false;">Cómo jugar</a>
+        </div>
+        <p class="footer-note">Consejo: Si algo sale de la pantalla, recarga para reiniciar.</p>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    function goToGame(){
+      try { sessionStorage.setItem('fromStart','1'); } catch(e) {}
+      // Ruta robusta relativa a la misma carpeta
+      window.location.href = './index.html';
+    }
+
+    // Click en el botón Start
+    document.getElementById('go-start').addEventListener('click', goToGame);
+
+    // Enter o Barra espaciadora para iniciar
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        goToGame();
+      }
+    });
+  </script>
+</body>
+</html>
