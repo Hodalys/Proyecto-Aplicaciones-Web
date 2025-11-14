@@ -25,8 +25,11 @@ let lastTime = 0;
 let isMouseDown = false;
 let mouseJoint = null;
 let projectile = null;
+let slingJoint = null;
 let catapult;
 let ground;
+let projectiles = [];
+let currentProjectileIndex = 0;
 
 // Image Assets
 const images = {};
@@ -183,6 +186,7 @@ window.onload = function() {
 };
 
 function setupUI() {
+    canvas.addEventListener('click', onCanvasClick);
     pauseButton.addEventListener('click', () => {
         if (currentGameState === GameState.PLAYING) pauseGame();
         else if (currentGameState === GameState.PAUSED) resumeGame();
@@ -245,6 +249,11 @@ function draw() {
         ctx.fillRect(0, 0, canvas.width, canvas.height);
     }
 
+    if (isMouseDown && mouseJoint && projectile) {
+        drawTensionLine();
+        drawTrajectory();
+    }
+
     // Solo dibujar cuerpos si el juego está en progreso
     if (currentGameState === GameState.PLAYING) {
         drawBodies();
@@ -305,7 +314,7 @@ function drawBodies() {
         }
     }
     // Draw catapult image separately as it's static and doesn't have a body in the same way
-    if (catapult) {
+    if (catapult && !isMouseDown) {
         const pos = catapult.GetPosition();
         ctx.save();
         ctx.translate(pos.x * SCALE, pos.y * SCALE);
@@ -324,7 +333,6 @@ function drawMenu() {
     ctx.fillText('Angry Birds Clone', canvas.width / 2, canvas.height / 2 - 100);
     ctx.font = '24px sans-serif';
     ctx.fillText('Click to Start', canvas.width / 2, canvas.height / 2 + 50);
-    canvas.addEventListener('click', startGame, { once: true });
 }
 
 function drawPaused() {
@@ -357,17 +365,52 @@ function drawLevelComplete() {
     ctx.fillText('Level Complete!', canvas.width / 2, canvas.height / 2 - 50);
     ctx.font = '24px sans-serif';
     ctx.fillText('Click to Continue', canvas.width / 2, canvas.height / 2 + 50);
-    canvas.addEventListener('click', () => {
-        currentLevel++;
-        if (currentLevel >= levels.length) {
-            currentGameState = GameState.GAME_OVER;
-        } else {
-            loadLevel(currentLevel);
-            currentGameState = GameState.PLAYING;
-        }
-    }, { once: true });
 }
 
+function drawTensionLine() {
+    if (!projectile || !catapult) return;
+
+    const pPos = projectile.GetPosition();
+    const cPos = catapult.GetPosition();
+    
+    ctx.strokeStyle = 'white';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(cPos.x * SCALE, cPos.y * SCALE);
+    ctx.lineTo(pPos.x * SCALE, pPos.y * SCALE);
+    ctx.stroke();
+}
+
+function drawTrajectory() {
+    if (!projectile || !catapult) return;
+
+    const pPos = projectile.GetPosition();
+    const cPos = catapult.GetPosition();
+    //Calcular el lanzamiento
+    const forceMultiplier = 25; 
+    const velocityX = (cPos.x - pPos.x) * forceMultiplier / projectile.GetMass();
+    const velocityY = (cPos.y - pPos.y) * forceMultiplier / projectile.GetMass();
+    
+    const x0 = pPos.x;
+    const y0 = pPos.y;
+    const numSteps = 80;
+    const timeStep = 0.03;
+
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.7)'; // Puntos blancos semitransparentes
+    const dotRadius = 4;
+
+    for (let i = 1; i <= numSteps; i++) {
+        const t = i * timeStep;
+        const x = x0 + velocityX * t;
+        const y = y0 + velocityY * t + 0.5 * GRAVITY.y * t * t; 
+
+        ctx.beginPath();
+        ctx.arc(x * SCALE, y * SCALE, dotRadius, 0, Math.PI * 2);
+        ctx.fill();
+
+        if (y * SCALE > canvas.height) break;
+    }
+}
 
 // --- Game State Management ---
 function startGame() {
@@ -409,7 +452,7 @@ function updateHUD() {
 
 // --- Level Loading ---
 function loadLevel(levelIndex) {
-    // Clear existing bodies
+    // 1. Clear existing bodies SAFELY
     let body = world.GetBodyList();
     while (body) {
         const next = body.GetNext();
@@ -420,29 +463,46 @@ function loadLevel(levelIndex) {
     const level = levels[levelIndex];
     timer = level.time;
 
-    // Create Ground
-    ground = createBox(canvas.width / 2 / SCALE, (canvas.height - 10) / SCALE, canvas.width / SCALE, 20 / SCALE, 'static');
+    // 2. RECREATE GROUND FIRST (very important)
+    ground = createBox(
+        canvas.width / 2 / SCALE,
+        (canvas.height - 10) / SCALE,
+        canvas.width / SCALE,
+        20 / SCALE,
+        'static'
+    );
+    ground.SetUserData({ type: 'ground' });
 
-    // Create Catapult
+    // 3. Create Catapult BODY as sensor
     catapult = createBox(5, 15, 0.5, 3, 'static');
+    catapult.GetFixtureList().SetSensor(true);
+    catapult.SetUserData({ type: 'catapult' });
 
-    // Create Projectile
-    projectile = createCircle(5, 13, 1);
-    projectile.SetUserData({ type: 'projectile' });
+    // 4. Reset projectiles
+    projectiles = [1, 2, 3];
+    currentProjectileIndex = 0;
+    createNextProjectile();
 
-
-    // Create Boxes
+    // 5. Create Boxes
     level.boxes.forEach(box => {
         const newBox = createBox(box.x, box.y, box.width, box.height, box.type);
-        newBox.SetUserData({type: 'box'});
+        newBox.SetUserData({ type: 'box' });
     });
 
-    // Create Target
-    const targetBox = createBox(level.target.x, level.target.y, level.target.width, level.target.height, 'dynamic');
+    // 6. Create Target
+    const targetBox = createBox(
+        level.target.x,
+        level.target.y,
+        level.target.width,
+        level.target.height,
+        'dynamic'
+    );
     targetBox.SetUserData({ type: 'target' });
 
-
+    // 7. Contact listener
     setupContactListener();
+
+    console.log("Level", levelIndex + 1, "loaded successfully.");
 }
 
 // --- Box2D Object Creation ---
@@ -489,15 +549,18 @@ function handleMouseDown(e) {
     aabb.upperBound.Set(point.x + 0.001, point.y + 0.001);
 
     world.QueryAABB(fixture => {
-        if (fixture.GetBody().GetType() !== b2Body.b2_staticBody) {
+        const body = fixture.GetBody();
+        const userData = body.GetUserData();
+        if (userData && userData.type === 'projectile' && body.GetType() === b2Body.b2_dynamicBody) {
             if (fixture.GetShape().TestPoint(fixture.GetBody().GetTransform(), point)) {
                 const md = new b2MouseJointDef();
                 md.bodyA = ground;
-                md.bodyB = fixture.GetBody();
+                md.bodyB = body;
                 md.target.Set(point.x, point.y);
-                md.maxForce = 300.0 * fixture.GetBody().GetMass();
+                md.maxForce = 300.0 * body.GetMass();
                 mouseJoint = world.CreateJoint(md);
-                fixture.GetBody().SetAwake(true);
+                body.SetAwake(true);
+                body.SetFixedRotation(true);
                 isMouseDown = true;
                 return false; // Stop searching
             }
@@ -516,19 +579,36 @@ function handleMouseUp(e) {
     if (!isMouseDown || !mouseJoint) return;
 
     const projectileBody = mouseJoint.GetBodyB();
-    if (projectileBody.GetUserData() && projectileBody.GetUserData().type === 'projectile') {
-        const catapultPosition = catapult.GetPosition();
-        const projectilePosition = projectileBody.GetPosition();
-        const force = new b2Vec2(
-            (catapultPosition.x - projectilePosition.x) * 150,
-            (catapultPosition.y - projectilePosition.y) * 150
-        );
-        projectileBody.ApplyImpulse(force, projectileBody.GetWorldCenter());
-    }
-
     world.DestroyJoint(mouseJoint);
     mouseJoint = null;
+
+    if (slingJoint) {
+        world.DestroyJoint(slingJoint);
+        slingJoint = null;
+    }
+    if (projectileBody.GetUserData()?.type === 'projectile') {
+        const catapultPosition = catapult.GetPosition();
+        const projectilePosition = projectileBody.GetPosition();
+        const forceMultiplier = 25; // usa el MISMO valor que drawTrajectory
+        const dx = catapultPosition.x - projectilePosition.x;
+        const dy = catapultPosition.y - projectilePosition.y;
+
+        const velX = dx * forceMultiplier / projectileBody.GetMass();
+        const velY = dy * forceMultiplier / projectileBody.GetMass();
+
+        projectileBody.SetFixedRotation(false);
+        projectileBody.SetLinearVelocity(new b2Vec2(velX, velY));
+    }
+    
     isMouseDown = false;
+    setTimeout(() => {
+        currentProjectileIndex++;
+        if (currentProjectileIndex < projectiles.length) {
+            createNextProjectile();
+        }else {
+            console.log("Sin proyectiles");
+        }
+    }, 800);
 }
 
 function getMouseCoords(e) {
@@ -555,7 +635,12 @@ function setupContactListener() {
             // Projectile hits target
             if ((userDataA.type === 'projectile' && userDataB.type === 'target') ||
                 (userDataA.type === 'target' && userDataB.type === 'projectile')) {
+                // Derribar el objetivo
                 levelComplete();
+                const targetBody = userDataA.type === 'target' ? bodyA : bodyB;
+                if (targetBody) {
+                    world.DestroyBody(targetBody);
+                }
             }
         }
     };
@@ -571,5 +656,33 @@ function resizeCanvas() {
         // Recreate ground
         if(ground) world.DestroyBody(ground);
         ground = createBox(canvas.width / 2 / SCALE, (canvas.height - 10) / SCALE, canvas.width / SCALE, 20 / SCALE, 'static');
+    }
+}
+
+// Funcion para crear el siguiente proyectil
+function createNextProjectile() {
+    if (currentProjectileIndex >= projectiles.length) {
+        console.log("No quedan proyectiles");
+        return;
+    }
+
+    const px = catapult.GetPosition().x - 1.5;   // ligeramente a la izquierda
+    const py = catapult.GetPosition().y - 2.5;   // MUCHO más arriba
+    projectile = createCircle(px, py, 0.7);
+    projectile.SetUserData({ type: 'projectile' });
+}
+
+function onCanvasClick() {
+    if (currentGameState === GameState.MENU) {
+        startGame();
+    } 
+    else if (currentGameState === GameState.LEVEL_COMPLETE) {
+        currentLevel++;
+        if (currentLevel >= levels.length) {
+            currentGameState = GameState.GAME_OVER;
+        } else {
+            loadLevel(currentLevel);
+            currentGameState = GameState.PLAYING;
+        }
     }
 }
