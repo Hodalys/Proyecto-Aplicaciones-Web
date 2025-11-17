@@ -1,4 +1,3 @@
-
 // Box2D Aliases - Se inicializarán cuando Box2D esté disponible
 let b2World, b2Vec2, b2BodyDef, b2Body, b2FixtureDef, b2PolygonShape, b2CircleShape, b2MouseJointDef, b2DistanceJointDef;
 let b2DebugDraw;
@@ -58,6 +57,38 @@ function preloadImages(callback) {
                 callback();
             }
         };
+    }
+}
+
+// Audio Assets
+const sounds = {};
+const soundSources = {
+    music: 'assets/audio/background_music.mp3',
+    //launch: 'assets/audio/launch.wav',
+    //hit: 'assets/audio/hit.wav',
+    //win: 'assets/audio/win.wav',
+    //lose: 'assets/audio/lose.wav'
+};
+
+function preloadSounds(callback) {
+    let loaded = 0;
+    const totalSounds = Object.keys(soundSources).length;
+
+    for (const key in soundSources) {
+        const audio = new Audio();
+        audio.src = soundSources[key];
+        audio.load();
+
+        audio.addEventListener('canplaythrough', () => {
+            if (++loaded >= totalSounds) callback();
+        });
+
+        audio.addEventListener('error', () => {
+            console.error(`Error loading audio: ${soundSources[key]}`);
+            if (++loaded >= totalSounds) callback();
+        });
+
+        sounds[key] = audio;
     }
 }
 
@@ -168,16 +199,16 @@ window.onload = function() {
         highScoreUI.textContent = highScore;
 
         preloadImages(() => {
-            setupUI();
-            window.addEventListener('resize', resizeCanvas);
+            preloadSounds(() => {
+                setupUI();
+                window.addEventListener('resize', resizeCanvas);
 
-            world = new b2World(GRAVITY, true);
-            addEventListeners();
+                world = new b2World(GRAVITY, true);
+                addEventListeners();
 
-            // Start with the menu
-            currentGameState = GameState.MENU;
-
-            requestAnimationFrame(gameLoop);
+                currentGameState = GameState.MENU;
+                requestAnimationFrame(gameLoop);
+            });
         });
     } catch (e) {
         console.error('Error during initialization:', e);
@@ -187,13 +218,18 @@ window.onload = function() {
 
 function setupUI() {
     canvas.addEventListener('click', onCanvasClick);
-    pauseButton.addEventListener('click', () => {
+    pauseButton.addEventListener('click', (e) => { // Agregamos 'e' para el evento
+        e.preventDefault();
+        e.stopPropagation(); // Previene que el clic llegue al canvas
         if (currentGameState === GameState.PLAYING) pauseGame();
         else if (currentGameState === GameState.PAUSED) resumeGame();
     });
-    muteButton.addEventListener('click', () => {
+muteButton.addEventListener('click', (e) => {
+        e.stopPropagation(); 
         isMuted = !isMuted;
         muteButton.textContent = isMuted ? 'Unmute' : 'Mute';
+        if (isMuted) stopMusic();
+        else playMusic();
     });
 }
 
@@ -208,6 +244,7 @@ function addEventListeners() {
 
 // --- Game Loop ---
 function gameLoop(timestamp) {
+    if (!lastTime) lastTime = timestamp; // evita delta enorme
     const deltaTime = (timestamp - lastTime) / 1000;
     lastTime = timestamp;
 
@@ -230,6 +267,7 @@ function update(deltaTime) {
             break;
         case GameState.MENU:
         case GameState.PAUSED:
+            break;
         case GameState.GAME_OVER:
         case GameState.LEVEL_COMPLETE:
             // Don't step the world
@@ -353,7 +391,6 @@ function drawGameOver() {
     ctx.fillText('Game Over', canvas.width / 2, canvas.height / 2 - 50);
     ctx.font = '24px sans-serif';
     ctx.fillText('Click to Restart', canvas.width / 2, canvas.height / 2 + 50);
-    canvas.addEventListener('click', () => window.location.reload(), { once: true });
 }
 
 function drawLevelComplete() {
@@ -416,6 +453,9 @@ function drawTrajectory() {
 function startGame() {
     currentGameState = GameState.PLAYING;
     loadLevel(currentLevel);
+    if (!isMuted) {
+        playMusic();
+    }
 }
 
 function pauseGame() {
@@ -430,14 +470,17 @@ function resumeGame() {
 
 function gameOver() {
     currentGameState = GameState.GAME_OVER;
+    playSoundEffect('lose');
     if (currentLevel > highScore) {
         highScore = currentLevel;
         localStorage.setItem('highScore', highScore);
     }
+    canvas.addEventListener('click', () => window.location.reload(), { once: true });
 }
 
 function levelComplete() {
     currentGameState = GameState.LEVEL_COMPLETE;
+    playSoundEffect('win');
     if (currentLevel + 1 > highScore) {
         highScore = currentLevel + 1;
         localStorage.setItem('highScore', highScore);
@@ -598,6 +641,7 @@ function handleMouseUp(e) {
 
         projectileBody.SetFixedRotation(false);
         projectileBody.SetLinearVelocity(new b2Vec2(velX, velY));
+        playSoundEffect('launch');
     }
     
     isMouseDown = false;
@@ -635,6 +679,7 @@ function setupContactListener() {
             // Projectile hits target
             if ((userDataA.type === 'projectile' && userDataB.type === 'target') ||
                 (userDataA.type === 'target' && userDataB.type === 'projectile')) {
+                playSoundEffect('hit');
                 // Derribar el objetivo
                 levelComplete();
                 const targetBody = userDataA.type === 'target' ? bodyA : bodyB;
@@ -684,5 +729,27 @@ function onCanvasClick() {
             loadLevel(currentLevel);
             currentGameState = GameState.PLAYING;
         }
+    }
+}
+
+function playMusic() {
+    if (!isMuted) {
+        const music = sounds.music;
+        music.loop = true;
+        music.volume = 0.5;
+        music.play().catch(() => {});
+    }
+}
+
+function stopMusic() {
+    const music = sounds.music;
+    music.pause();
+    music.currentTime = 0;
+}
+
+function playSoundEffect(name) {
+    if (!isMuted && sounds[name]) {
+        sounds[name].currentTime = 0;
+        sounds[name].play().catch(() => {});
     }
 }
