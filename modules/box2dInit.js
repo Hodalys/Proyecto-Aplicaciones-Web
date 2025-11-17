@@ -1,10 +1,18 @@
+/**
+ * BOX2DINIT.JS
+ * Inicializa Box2D y sus referencias
+ */
+
+/**
+ * Inicializa Box2D cuando esté disponible
+ * @returns {boolean} true si Box2D se inicializó correctamente, false en caso contrario
+ */
 function initBox2D() {
-    // Verifica si Box2D está disponible
     if (typeof Box2D === 'undefined') {
         console.error('Box2D no está disponible');
         return false;
     }
-
+    
     try {
         // Obtener referencias de Box2D
         const dynamics = Box2D.Dynamics;
@@ -13,8 +21,7 @@ function initBox2D() {
         const shapes = collision.Shapes;
         const math = common.Math;
         const joints = dynamics.Joints;
-
-        // Asignación de las clases y funciones de Box2D a variables locales
+        
         b2World = dynamics.b2World;
         b2Vec2 = math.b2Vec2;
         b2BodyDef = dynamics.b2BodyDef;
@@ -24,11 +31,11 @@ function initBox2D() {
         b2CircleShape = shapes.b2CircleShape;
         b2MouseJointDef = joints.b2MouseJointDef;
         b2DistanceJointDef = joints.b2DistanceJointDef;
-        // Inicializa el depurador de Box2D si está disponible
+        
         if (dynamics.b2DebugDraw) {
             b2DebugDraw = dynamics.b2DebugDraw;
         }
-        // Establece la gravedad en el mundo físico
+        
         GRAVITY = new b2Vec2(0, 10);
         console.log('Box2D inicializado correctamente');
         return true;
