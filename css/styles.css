@@ -12,6 +12,10 @@ canvas {
     height: 100vh;
 }
 
+#gameCanvas{
+    pointer-events: auto;
+}
+
 #ui-container {
     position: relative;
     width: 100vw;
@@ -63,9 +67,11 @@ canvas {
 }
 
 #pause-button {
+    pointer-events: auto;
     right: 15px;
 }
 
 #mute-button {
+    pointer-events: auto;
     right: 120px; /* Adjusted for spacing */
 }

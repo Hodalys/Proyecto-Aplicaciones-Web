@@ -5,19 +5,31 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Proyecto Primer Bimestre - Angry Birds Clone</title>
     <link rel="stylesheet" href="css/styles.css">
+    <link rel="icon" href="data:,">
 </head>
 <body>
     <div id="ui-container">
-        <div id="hud">
-            <span>Level: <span id="level">1</span></span>
-            <span>High Score: <span id="high-score">0</span></span>
-            <span>Time: <span id="timer">0</span></span>
-        </div>
         <canvas id="gameCanvas"></canvas>
-        <button id="pause-button" class="button">Pause</button>
-        <button id="mute-button" class="button">Mute</button>
+        
+        <div id="hud">
+            <span>Nivel: <span id="level">1</span></span>
+            <span>Puntuación Máxima: <span id="high-score">0</span></span>
+            <span>Tiempo: <span id="timer">0</span></span>
+        </div>
+        
+        <button id="pause-button" class="button">Pausar</button>
+        <button id="mute-button" class="button">Silenciar</button>
     </div>
+    
     <script src="lib/Box2D.js"></script>
-    <script src="game.js"></script>
+    
+    <!-- Scripts del juego -->
+    <script src="box2d.js" type="module"></script>
+    <script src="assets.js" type="module"></script>
+    <script src="ui.js" type="module"></script>
+    <script src="gameLoop.js" type="module"></script>
+    <script src="level.js" type="module"></script>
+    <script src="physics.js" type="module"></script>
+    <script src="game.js" type="module"></script>
 </body>
 </html>
