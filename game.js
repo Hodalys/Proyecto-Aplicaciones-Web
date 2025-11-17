@@ -65,7 +65,7 @@ function preloadImages(callback) {
 const sounds = {};
 const soundSources = {
     music: 'assets/audio/background_music.mp3',
-    //win: 'assets/audio/win.mp3',
+    win: 'assets/audio/win.mp3',
     lose: 'assets/audio/lose.mp3'
 };
 
@@ -146,7 +146,7 @@ const levels = [
             { x: 18, y: 13, width: 2, height: 2, type: 'static' },
         ],
         target: { x: 18, y: 11, width: 1.5, height: 1.5 },
-        time: 45
+        time: 20
     },
     // Level 2
     {
@@ -156,7 +156,7 @@ const levels = [
             { x: 17.5, y: 12, width: 6, height: 1, type: 'static' }
         ],
         target: { x: 17.5, y: 11, width: 1.5, height: 1.5 },
-        time: 60
+        time: 20
     },
     // Level 3
     {
@@ -167,7 +167,7 @@ const levels = [
             { x: 18, y: 15, width: 1, height: 1, type: 'dynamic' },
         ],
         target: { x: 18, y: 9, width: 1.5, height: 1.5 },
-        time: 75
+        time: 20
     }
 ];
 
@@ -683,7 +683,10 @@ function setupContactListener() {
                 if (targetBody) {
                     world.DestroyBody(targetBody);
                 }
-                levelComplete();
+                // Esperar a que el sonido termine antes de cambiar de nivel
+                setTimeout(() => {
+                    levelComplete();
+                }, 500);
             }
         }
     };
